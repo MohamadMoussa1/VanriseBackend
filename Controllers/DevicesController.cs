@@ -1,22 +1,43 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using VanriseBackend.Models;
 using Microsoft.Data.SqlClient;
+using VanriseBackend.Mappers;
 namespace VanriseBackend.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
     public class DevicesController : ControllerBase
     {
-        private static List<Device> devices = new List<Device>
+        private readonly string _connectionString;
+
+        public DevicesController(IConfiguration configuration)
         {
-            new Device { Id = 1, Name = "Laptop" },
-            new Device { Id = 2, Name = "Phone" },
-            new Device { Id = 3, Name = "Tablet" }
-        };
+            _connectionString = configuration.GetConnectionString("DefaultConnection")!;
+        }
 
         [HttpGet]
         public List<Device> GetAllDevices()
         {
+            List<Device> devices = new List<Device>();
+
+            using (SqlConnection connection = new SqlConnection(_connectionString))
+            {
+                connection.Open();
+
+                string query = "SELECT Id, Name FROM Device";
+
+                using (SqlCommand command = new SqlCommand(query, connection))
+                {
+                    using (SqlDataReader reader = command.ExecuteReader())
+                    {
+                        while (reader.Read())
+                        {
+                            devices.Add(DeviceMapper.Map(reader));
+                        }
+                    }
+                }
+            }
+
             return devices;
         }
 
@@ -24,24 +45,64 @@ namespace VanriseBackend.Controllers
         [HttpGet("filter")]
         public List<Device> GetFilteredDevices(string search)
         {
-            return devices
-                .Where(device => device.Name.Contains(search, StringComparison.OrdinalIgnoreCase))
-                .ToList();
+            List<Device> devices = new List<Device>();
+
+            using (SqlConnection connection = new SqlConnection(_connectionString))
+            {
+                connection.Open();
+
+                string query = "SELECT Id, Name FROM Device WHERE Name LIKE @Search";
+
+                using (SqlCommand command = new SqlCommand(query, connection))
+                {
+                    command.Parameters.AddWithValue("@Search", "%" + search + "%");
+
+                    using (SqlDataReader reader = command.ExecuteReader())
+                    {
+                        while (reader.Read())
+                        {
+                            devices.Add(DeviceMapper.Map(reader));
+                        }
+                    }
+                }
+            }
+
+            return devices;
         }
+
         [HttpPost]
-        public void AddDevice(Device device)
+        public void AddDevice(string name)
         {
-            devices.Add(device);
+            using (SqlConnection connection = new SqlConnection(_connectionString))
+            {
+                connection.Open();
+
+                string query = "INSERT INTO Device (Name) VALUES (@Name)";
+
+                using (SqlCommand command = new SqlCommand(query, connection))
+                {
+                    command.Parameters.AddWithValue("@Name", name);
+                    command.ExecuteNonQuery();
+                }
+            }
         }
 
         [HttpPut]
         public void UpdateDevice(Device device)
         {
-            Device? existingDevice = devices.FirstOrDefault(d => d.Id == device.Id);
-
-            if (existingDevice != null)
+            using (SqlConnection connection = new SqlConnection(_connectionString))
             {
-                existingDevice.Name = device.Name;
+                connection.Open();
+
+                string query = "UPDATE Device SET Name = @Name WHERE Id = @Id";
+
+                using (SqlCommand command = new SqlCommand(query, connection))
+                {
+                    command.Parameters.AddWithValue("@Name", device.Name);
+                    command.Parameters.AddWithValue("@Id", device.Id);
+
+                    command.ExecuteNonQuery();
+                }
             }
         }
 
