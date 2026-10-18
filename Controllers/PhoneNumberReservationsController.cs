@@ -124,5 +124,102 @@ namespace VanriseBackend.Controllers
 
             return reservations;
         }
+        [HttpGet("active/{clientId}")]
+        public List<object> GetActiveReservations(int clientId)
+        {
+            List<object> reservations = new List<object>();
+
+            using (SqlConnection connection = new SqlConnection(_connectionString))
+            {
+                connection.Open();
+
+                string query = @"
+            SELECT
+                r.Id,
+                p.Id AS PhoneNumberId,
+                p.Number
+            FROM PhoneNumberReservation r
+            INNER JOIN PhoneNumber p
+                ON r.PhoneNumberId = p.Id
+            WHERE r.ClientId = @ClientId
+              AND r.BED < GETDATE()
+              AND (r.EED > GETDATE() OR r.EED IS NULL)";
+
+                using (SqlCommand command = new SqlCommand(query, connection))
+                {
+                    command.Parameters.AddWithValue("@ClientId", clientId);
+
+                    using (SqlDataReader reader = command.ExecuteReader())
+                    {
+                        while (reader.Read())
+                        {
+                            reservations.Add(new
+                            {
+                                Id = Convert.ToInt32(reader["Id"]),
+                                PhoneNumberId = Convert.ToInt32(reader["PhoneNumberId"]),
+                                Number = reader["Number"].ToString()!
+                            });
+                        }
+                    }
+                }
+            }
+
+            return reservations;
+        }
+        [HttpPost("reserve")]
+        public IActionResult ReservePhoneNumber(int clientId, int phoneNumberId)
+        {
+            using (SqlConnection connection = new SqlConnection(_connectionString))
+            {
+                connection.Open();
+
+                string query = @"
+            INSERT INTO PhoneNumberReservation
+                (ClientId, PhoneNumberId, BED, EED)
+            VALUES
+                (@ClientId, @PhoneNumberId, @BED, NULL)";
+
+                using (SqlCommand command = new SqlCommand(query, connection))
+                {
+                    command.Parameters.AddWithValue("@ClientId", clientId);
+                    command.Parameters.AddWithValue("@PhoneNumberId", phoneNumberId);
+                    command.Parameters.AddWithValue("@BED", DateTime.Now);
+
+                    command.ExecuteNonQuery();
+                }
+            }
+
+            return Ok();
+        }
+        [HttpPut("unreserve")]
+        public IActionResult UnreservePhoneNumber(int clientId, int phoneNumberId)
+        {
+            using (SqlConnection connection = new SqlConnection(_connectionString))
+            {
+                connection.Open();
+
+                string query = @"
+            UPDATE PhoneNumberReservation
+            SET EED = GETDATE()
+            WHERE ClientId = @ClientId
+              AND PhoneNumberId = @PhoneNumberId
+              AND BED < GETDATE()
+              AND (EED > GETDATE() OR EED IS NULL)";
+
+                using (SqlCommand command = new SqlCommand(query, connection))
+                {
+                    command.Parameters.AddWithValue("@ClientId", clientId);
+                    command.Parameters.AddWithValue("@PhoneNumberId", phoneNumberId);
+
+                    int affectedRows = command.ExecuteNonQuery();
+
+                    if (affectedRows == 0)
+                        return NotFound("No active reservation found.");
+                }
+            }
+
+            return Ok();
+        }
     }
+
 }
