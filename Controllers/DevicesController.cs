@@ -1,9 +1,12 @@
-﻿using Microsoft.AspNetCore.Mvc;
-using VanriseBackend.Models;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 using VanriseBackend.Mappers;
+using VanriseBackend.Models;
+
 namespace VanriseBackend.Controllers
 {
+    [Authorize]
     [Route("api/[controller]")]
     [ApiController]
     public class DevicesController : ControllerBase
@@ -71,8 +74,24 @@ namespace VanriseBackend.Controllers
         }
 
         [HttpPost]
-        public void AddDevice(string name)
+        public IActionResult AddDevice(string? name)
         {
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                return BadRequest(new
+                {
+                    message = "Device name is required."
+                });
+            }
+
+            if (name.Length > 255)
+            {
+                return BadRequest(new
+                {
+                    message = "Device name cannot exceed 255 characters."
+                });
+            }
+
             using (SqlConnection connection = new SqlConnection(_connectionString))
             {
                 connection.Open();
@@ -81,15 +100,44 @@ namespace VanriseBackend.Controllers
 
                 using (SqlCommand command = new SqlCommand(query, connection))
                 {
-                    command.Parameters.AddWithValue("@Name", name);
+                    command.Parameters.AddWithValue("@Name", name.Trim());
                     command.ExecuteNonQuery();
                 }
             }
+
+            return Ok(new
+            {
+                message = "Device added successfully."
+            });
         }
 
         [HttpPut]
-        public void UpdateDevice(Device device)
+        public IActionResult UpdateDevice(Device device)
         {
+            if (device.Id <= 0)
+            {
+                return BadRequest(new
+                {
+                    message = "Invalid device ID."
+                });
+            }
+
+            if (string.IsNullOrWhiteSpace(device.Name))
+            {
+                return BadRequest(new
+                {
+                    message = "Device name is required."
+                });
+            }
+
+            if (device.Name.Length > 255)
+            {
+                return BadRequest(new
+                {
+                    message = "Device name cannot exceed 255 characters."
+                });
+            }
+
             using (SqlConnection connection = new SqlConnection(_connectionString))
             {
                 connection.Open();
@@ -98,12 +146,25 @@ namespace VanriseBackend.Controllers
 
                 using (SqlCommand command = new SqlCommand(query, connection))
                 {
-                    command.Parameters.AddWithValue("@Name", device.Name);
                     command.Parameters.AddWithValue("@Id", device.Id);
+                    command.Parameters.AddWithValue("@Name", device.Name.Trim());
 
-                    command.ExecuteNonQuery();
+                    int affectedRows = command.ExecuteNonQuery();
+
+                    if (affectedRows == 0)
+                    {
+                        return NotFound(new
+                        {
+                            message = "Device not found."
+                        });
+                    }
                 }
             }
+
+            return Ok(new
+            {
+                message = "Device updated successfully."
+            });
         }
 
 

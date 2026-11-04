@@ -1,9 +1,11 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 using System.Data;
 
 namespace VanriseBackend.Controllers
 {
+    [Authorize]
     [Route("api/[controller]")]
     [ApiController]
     public class ReportsController : ControllerBase
@@ -16,129 +18,145 @@ namespace VanriseBackend.Controllers
                 configuration.GetConnectionString("DefaultConnection")!;
         }
         [HttpGet("clients-per-type")]
-        public List<object> GetClientsPerType(int? type)
+        public async Task<IActionResult> GetClientsPerType(int? type)
         {
-            List<object> report = new List<object>();
-
-            using (SqlConnection connection = new SqlConnection(_connectionString))
+            // Type: 0 = Individual, 1 = Organization
+            if (type.HasValue && type.Value != 0 && type.Value != 1)
             {
-                connection.Open();
+                return BadRequest(new
+                {
+                    Message = "Invalid client type. Use 0 for Individual or 1 for Organization."
+                });
+            }
+
+            var result = new List<object>();
+
+            using (var connection = new SqlConnection(_connectionString))
+            {
+                await connection.OpenAsync();
 
                 string query = @"
-            SELECT
-                Type,
-                COUNT(*) AS NoOfClients
+            SELECT Type, COUNT(*) AS NoOfClients
             FROM Client
             WHERE (@Type IS NULL OR Type = @Type)
             GROUP BY Type
             ORDER BY Type";
 
-                using (SqlCommand command = new SqlCommand(query, connection))
+                using var command = new SqlCommand(query, connection);
+
+                command.Parameters.Add("@Type", SqlDbType.Int).Value =
+                    type.HasValue ? type.Value : DBNull.Value;
+
+                using var reader = await command.ExecuteReaderAsync();
+
+                while (await reader.ReadAsync())
                 {
-                    command.Parameters.Add("@Type", SqlDbType.Int).Value =
-                        (object?)type ?? DBNull.Value;
+                    int clientType = Convert.ToInt32(reader["Type"]);
 
-                    using (SqlDataReader reader = command.ExecuteReader())
+                    result.Add(new
                     {
-                        while (reader.Read())
-                        {
-                            int clientType = Convert.ToInt32(reader["Type"]);
-
-                            report.Add(new
-                            {
-                                Type = clientType == 0
-                                    ? "Individual"
-                                    : "Organization",
-
-                                NoOfClients =
-                                    Convert.ToInt32(reader["NoOfClients"])
-                            });
-                        }
-                    }
+                        Type = clientType == 0 ? "Individual" : "Organization",
+                        NoOfClients = Convert.ToInt32(reader["NoOfClients"])
+                    });
                 }
             }
 
-            return report;
+            return Ok(result);
         }
         [HttpGet("phone-numbers-per-device")]
-        public List<object> GetPhoneNumbersPerDevice(
+        public async Task<IActionResult> GetPhoneNumbersPerDevice(
     int? deviceId,
     string? status)
         {
-            List<object> report = new List<object>();
-
-            using (SqlConnection connection = new SqlConnection(_connectionString))
+            if (deviceId.HasValue && deviceId.Value <= 0)
             {
-                connection.Open();
+                return BadRequest(new
+                {
+                    Message = "Device ID must be greater than zero."
+                });
+            }
+
+            if (!string.IsNullOrWhiteSpace(status))
+            {
+                status = status.Trim();
+
+                if (!status.Equals("Reserved", StringComparison.OrdinalIgnoreCase) &&
+                    !status.Equals("Unreserved", StringComparison.OrdinalIgnoreCase))
+                {
+                    return BadRequest(new
+                    {
+                        Message = "Invalid status. Use Reserved or Unreserved."
+                    });
+                }
+
+                status = status.Equals("Reserved", StringComparison.OrdinalIgnoreCase)
+                    ? "Reserved"
+                    : "Unreserved";
+            }
+            else
+            {
+                status = null;
+            }
+
+            var result = new List<object>();
+
+            using (var connection = new SqlConnection(_connectionString))
+            {
+                await connection.OpenAsync();
 
                 string query = @"
-            WITH PhoneStatuses AS
+            WITH PhoneNumberStatus AS
             (
                 SELECT
-                    p.Id,
-                    p.DeviceId,
+                    d.Name AS Device,
+                    pn.DeviceId,
                     CASE
                         WHEN EXISTS
                         (
                             SELECT 1
                             FROM PhoneNumberReservation r
-                            WHERE r.PhoneNumberId = p.Id
+                            WHERE r.PhoneNumberId = pn.Id
                               AND r.BED < GETDATE()
                               AND (r.EED > GETDATE() OR r.EED IS NULL)
                         )
                         THEN 'Reserved'
                         ELSE 'Unreserved'
-                    END AS PhoneStatus
-                FROM PhoneNumber p
+                    END AS PhoneNumbersStatus
+                FROM PhoneNumber pn
+                INNER JOIN Device d ON pn.DeviceId = d.Id
             )
             SELECT
-                d.Name AS Device,
-                ps.PhoneStatus AS PhoneNumbersStatus,
+                Device,
+                PhoneNumbersStatus,
                 COUNT(*) AS NoOfPhoneNumbers
-            FROM PhoneStatuses ps
-            INNER JOIN Device d
-                ON ps.DeviceId = d.Id
-            WHERE
-                (@DeviceId IS NULL OR d.Id = @DeviceId)
-                AND
-                (@Status IS NULL OR ps.PhoneStatus = @Status)
-            GROUP BY
-                d.Name,
-                ps.PhoneStatus
-            ORDER BY
-                d.Name,
-                ps.PhoneStatus";
+            FROM PhoneNumberStatus
+            WHERE (@DeviceId IS NULL OR DeviceId = @DeviceId)
+              AND (@Status IS NULL OR PhoneNumbersStatus = @Status)
+            GROUP BY Device, PhoneNumbersStatus
+            ORDER BY Device, PhoneNumbersStatus";
 
-                using (SqlCommand command = new SqlCommand(query, connection))
+                using var command = new SqlCommand(query, connection);
+
+                command.Parameters.Add("@DeviceId", SqlDbType.Int).Value =
+                    deviceId.HasValue ? deviceId.Value : DBNull.Value;
+
+                command.Parameters.Add("@Status", SqlDbType.NVarChar, 20).Value =
+                    status == null ? DBNull.Value : status;
+
+                using var reader = await command.ExecuteReaderAsync();
+
+                while (await reader.ReadAsync())
                 {
-                    command.Parameters.Add("@DeviceId", SqlDbType.Int).Value =
-                        (object?)deviceId ?? DBNull.Value;
-
-                    command.Parameters.Add("@Status", SqlDbType.NVarChar, 20).Value =
-                        string.IsNullOrWhiteSpace(status)
-                            ? DBNull.Value
-                            : status;
-
-                    using (SqlDataReader reader = command.ExecuteReader())
+                    result.Add(new
                     {
-                        while (reader.Read())
-                        {
-                            report.Add(new
-                            {
-                                Device = reader["Device"].ToString()!,
-
-                                PhoneNumbersStatus =
-                                    reader["PhoneNumbersStatus"].ToString()!,
-
-                                NoOfPhoneNumbers =
-                                    Convert.ToInt32(reader["NoOfPhoneNumbers"])
-                            });
-                        }
-                    }
+                        Device = reader["Device"].ToString(),
+                        PhoneNumbersStatus = reader["PhoneNumbersStatus"].ToString(),
+                        NoOfPhoneNumbers = Convert.ToInt32(reader["NoOfPhoneNumbers"])
+                    });
                 }
             }
 
-            return report;
+            return Ok(result);
         }
     }
 }

@@ -2,9 +2,10 @@
 using Microsoft.Data.SqlClient;
 using VanriseBackend.Models;
 using VanriseBackend.Enums;
-
+using Microsoft.AspNetCore.Authorization;
 namespace VanriseBackend.Controllers
 {
+    [Authorize]
     [Route("api/[controller]")]
     [ApiController]
     public class ClientsController : ControllerBase
@@ -53,8 +54,62 @@ namespace VanriseBackend.Controllers
         }
 
         [HttpPost]
-        public void AddClient(Client client)
+        public IActionResult AddClient(Client client)
         {
+            if (string.IsNullOrWhiteSpace(client.Name))
+            {
+                return BadRequest(new
+                {
+                    message = "Client name is required."
+                });
+            }
+
+            client.Name = client.Name.Trim();
+
+            if (client.Name.Length > 255)
+            {
+                return BadRequest(new
+                {
+                    message = "Client name cannot exceed 255 characters."
+                });
+            }
+
+            if (client.Type != ClientType.Individual &&
+                client.Type != ClientType.Organization)
+            {
+                return BadRequest(new
+                {
+                    message = "Invalid client type."
+                });
+            }
+
+            if (client.Type == ClientType.Individual &&
+                client.BirthDate.HasValue)
+            {
+                DateTime birthDate = client.BirthDate.Value.Date;
+
+                if (birthDate > DateTime.Today)
+                {
+                    return BadRequest(new
+                    {
+                        message = "Birth date cannot be in the future."
+                    });
+                }
+
+                if (birthDate >= DateTime.Today.AddYears(-18))
+                {
+                    return BadRequest(new
+                    {
+                        message = "Client must be older than 18."
+                    });
+                }
+            }
+
+            if (client.Type == ClientType.Organization)
+            {
+                client.BirthDate = null;
+            }
+
             using (SqlConnection connection = new SqlConnection(_connectionString))
             {
                 connection.Open();
@@ -67,27 +122,86 @@ namespace VanriseBackend.Controllers
                     command.Parameters.AddWithValue("@Name", client.Name);
                     command.Parameters.AddWithValue("@Type", (int)client.Type);
 
-                    if (client.Type == ClientType.Individual)
-                    {
-                        command.Parameters.AddWithValue(
-                            "@BirthDate",
-                            (object?)client.BirthDate ?? DBNull.Value);
-                    }
-                    else
-                    {
-                        command.Parameters.AddWithValue(
-                            "@BirthDate",
-                            DBNull.Value);
-                    }
+                    command.Parameters.AddWithValue(
+                        "@BirthDate",
+                        (object?)client.BirthDate ?? DBNull.Value
+                    );
 
                     command.ExecuteNonQuery();
                 }
             }
+
+            return Ok(new
+            {
+                message = "Client added successfully."
+            });
         }
 
         [HttpPut]
-        public void UpdateClient(Client client)
+        public IActionResult UpdateClient(Client client)
         {
+            if (client.Id <= 0)
+            {
+                return BadRequest(new
+                {
+                    message = "Invalid client ID."
+                });
+            }
+
+            if (string.IsNullOrWhiteSpace(client.Name))
+            {
+                return BadRequest(new
+                {
+                    message = "Client name is required."
+                });
+            }
+
+            client.Name = client.Name.Trim();
+
+            if (client.Name.Length > 255)
+            {
+                return BadRequest(new
+                {
+                    message = "Client name cannot exceed 255 characters."
+                });
+            }
+
+            if (client.Type != ClientType.Individual &&
+                client.Type != ClientType.Organization)
+            {
+                return BadRequest(new
+                {
+                    message = "Invalid client type."
+                });
+            }
+
+            if (client.Type == ClientType.Individual &&
+                client.BirthDate.HasValue)
+            {
+                DateTime birthDate = client.BirthDate.Value.Date;
+
+                if (birthDate > DateTime.Today)
+                {
+                    return BadRequest(new
+                    {
+                        message = "Birth date cannot be in the future."
+                    });
+                }
+
+                if (birthDate >= DateTime.Today.AddYears(-18))
+                {
+                    return BadRequest(new
+                    {
+                        message = "Client must be older than 18."
+                    });
+                }
+            }
+
+            if (client.Type == ClientType.Organization)
+            {
+                client.BirthDate = null;
+            }
+
             using (SqlConnection connection = new SqlConnection(_connectionString))
             {
                 connection.Open();
@@ -104,28 +218,42 @@ namespace VanriseBackend.Controllers
                     command.Parameters.AddWithValue("@Name", client.Name);
                     command.Parameters.AddWithValue("@Type", (int)client.Type);
 
-                    if (client.Type == ClientType.Individual)
-                    {
-                        command.Parameters.AddWithValue(
-                            "@BirthDate",
-                            (object?)client.BirthDate ?? DBNull.Value);
-                    }
-                    else
-                    {
-                        command.Parameters.AddWithValue(
-                            "@BirthDate",
-                            DBNull.Value);
-                    }
+                    command.Parameters.AddWithValue(
+                        "@BirthDate",
+                        (object?)client.BirthDate ?? DBNull.Value
+                    );
 
-                    command.ExecuteNonQuery();
+                    int affectedRows = command.ExecuteNonQuery();
+
+                    if (affectedRows == 0)
+                    {
+                        return NotFound(new
+                        {
+                            message = "Client not found."
+                        });
+                    }
                 }
             }
+
+            return Ok(new
+            {
+                message = "Client updated successfully."
+            });
         }
 
         [HttpGet("filter")]
-        
-        public List<object> GetFilteredClients(string? name, ClientType? type)
+        public IActionResult GetFilteredClients(string? name, ClientType? type)
         {
+            if (type.HasValue &&
+                type.Value != ClientType.Individual &&
+                type.Value != ClientType.Organization)
+            {
+                return BadRequest(new
+                {
+                    message = "Invalid client type."
+                });
+            }
+
             List<object> clients = new List<object>();
 
             using (SqlConnection connection = new SqlConnection(_connectionString))
@@ -141,13 +269,15 @@ namespace VanriseBackend.Controllers
                 {
                     command.Parameters.AddWithValue(
                         "@Name",
-                        (object?)name ?? DBNull.Value);
+                        (object?)name ?? DBNull.Value
+                    );
 
                     command.Parameters.AddWithValue(
                         "@Type",
                         type.HasValue
-                            ? (int)type.Value
-                            : DBNull.Value);
+                            ? (object)(int)type.Value
+                            : DBNull.Value
+                    );
 
                     using (SqlDataReader reader = command.ExecuteReader())
                     {
@@ -171,7 +301,7 @@ namespace VanriseBackend.Controllers
                 }
             }
 
-            return clients;
+            return Ok(clients);
         }
     }
 }
